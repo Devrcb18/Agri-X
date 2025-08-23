@@ -39,10 +39,9 @@ class CropPrediction(db.Model):
     ph = db.Column(db.Float, nullable=True)
     confidence = db.Column(db.Float, nullable=True)
     expected_yield = db.Column(db.Float, nullable=True)
-<<<<<<< HEAD
-    suitability_score = db.Column(db.Float, nullable=True)  # Added for dashboard compatibility
-=======
->>>>>>> e7bd2cad140782cdd3ebee1e75d0138bdb5097b0
+    suitability_score = db.Column(db.Float, nullable=True)
+    yield_per_hectare = db.Column(db.Float, nullable=True)
+    total_yield = db.Column(db.Float, nullable=True)
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     

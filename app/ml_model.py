@@ -204,6 +204,39 @@ class CropPredictionModel:
         # Save models
         self.save_models()
         logger.info("Models trained and saved successfully!")
+
+    def train_yield_model_from_csv(self):
+        """Train the yield prediction model from the crop_yield.csv file."""
+        try:
+            df_yield = pd.read_csv('files/crop_yield.csv')
+            df_yield.dropna(inplace=True)
+
+            categorical_features = ['State', 'Crop', 'Season']
+            self.yield_label_encoders = {}
+            for feature in categorical_features:
+                self.yield_label_encoders[feature] = LabelEncoder()
+                df_yield[feature] = self.yield_label_encoders[feature].fit_transform(df_yield[feature])
+
+            features = ['Crop_Year', 'Season', 'State', 'Area', 'Annual_Rainfall', 'Fertilizer', 'Pesticide', 'Crop']
+            X = df_yield[features]
+            y = df_yield['Yield']
+
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+            self.yield_model_real = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=10)
+            self.yield_model_real.fit(X_train, y_train)
+
+            y_pred = self.yield_model_real.predict(X_test)
+            mse = mean_squared_error(y_test, y_pred)
+            logger.info(f"Real Yield model MSE: {mse:.2f}")
+
+            joblib.dump(self.yield_model_real, os.path.join(self.model_dir, 'yield_model_real.pkl'))
+            joblib.dump(self.yield_label_encoders, os.path.join(self.model_dir, 'yield_label_encoders.pkl'))
+            logger.info("Real yield model trained and saved successfully!")
+            return True
+        except Exception as e:
+            logger.error(f"Error training real yield model: {str(e)}")
+            return False
     
     def save_models(self):
         """Save trained models to disk"""
@@ -390,9 +423,78 @@ def get_ml_prediction(crop_type, season, area, soil_type, nitrogen, phosphorus, 
         nitrogen, phosphorus, potassium, rainfall, temperature
     )
 
+def get_yield_prediction(crop_type, area, state, seed_quality, fertilizer_usage, pesticide_usage, technology_level, irrigation):
+    """
+    Main function to get ML-based yield prediction using the real data model.
+    """
+    try:
+        model_path = os.path.join('app/ml_models', 'yield_model_real.pkl')
+        encoders_path = os.path.join('app/ml_models', 'yield_label_encoders.pkl')
+
+        if not os.path.exists(model_path) or not os.path.exists(encoders_path):
+            raise FileNotFoundError("Yield model or encoders not found. Please train the model first.")
+
+        model = joblib.load(model_path)
+        label_encoders = joblib.load(encoders_path)
+
+        # Map form inputs to model features
+        # This is a simplified mapping and can be improved
+        fertilizer_map = {'low': 50000, 'moderate': 100000, 'high': 150000, 'organic': 75000}
+        pesticide_map = {'low': 1000, 'moderate': 2000, 'high': 3000, 'organic': 1500, 'none': 0}
+
+        fertilizer = fertilizer_map.get(fertilizer_usage, 100000)
+        pesticide = pesticide_map.get(pesticide_usage, 2000)
+
+        # Estimate rainfall based on state (simplified)
+        state_rainfall = {
+            'Andhra Pradesh': 1000, 'Bihar': 1200, 'Gujarat': 800, 'Haryana': 600,
+            'Karnataka': 900, 'Madhya Pradesh': 1100, 'Maharashtra': 950, 'Punjab': 500,
+            'Tamil Nadu': 1100, 'Uttar Pradesh': 1000, 'West Bengal': 1300
+        }
+        rainfall = state_rainfall.get(state, 900)
+
+        # Create input dataframe
+        input_data = {
+            'Crop_Year': [datetime.now().year],
+            'Season': [label_encoders['Season'].transform(['Kharif'])[0]], # Default to Kharif
+            'State': [label_encoders['State'].transform([state])[0]],
+            'Area': [area],
+            'Annual_Rainfall': [rainfall],
+            'Fertilizer': [fertilizer],
+            'Pesticide': [pesticide],
+            'Crop': [label_encoders['Crop'].transform([crop_type])[0]]
+        }
+        input_df = pd.DataFrame(input_data)
+
+        # Predict yield
+        predicted_yield = model.predict(input_df)[0]
+
+        return {
+            'yield_per_hectare': round(predicted_yield, 2),
+            'total_yield': round(predicted_yield * area, 2),
+            'confidence': 85,  # Placeholder confidence
+            'suggestions': ["Ensure proper irrigation.", "Monitor for pests regularly."]
+        }
+
+    except Exception as e:
+        logger.error(f"Yield prediction error: {str(e)}")
+        return {
+            'yield_per_hectare': 3.0,
+            'total_yield': 3.0 * area,
+            'confidence': 50,
+            'suggestions': ["ML model for yield prediction is unavailable. Using basic estimation."]
+        }
+
+
 def train_models_if_needed():
     """Train models if they haven't been trained yet"""
     if not ml_model.is_trained:
         logger.info("Training ML models...")
         ml_model.train_models()
+
+    # Also train the real yield model if it doesn't exist
+    if not os.path.exists(os.path.join(ml_model.model_dir, 'yield_model_real.pkl')):
+        logger.info("Training real yield model from CSV...")
+        ml_model.train_yield_model_from_csv()
+
     return ml_model.is_trained

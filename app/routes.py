@@ -27,7 +27,7 @@ except ImportError as e:
 
 # Import ML model for crop prediction
 try:
-    from ml_model import get_ml_prediction, train_models_if_needed
+    from ml_model import get_ml_prediction, train_models_if_needed, get_yield_prediction
     ML_MODEL_AVAILABLE = True
     print("Machine Learning crop prediction model loaded successfully!")
     # Train models if needed
@@ -635,75 +635,42 @@ def yield_estimation():
         fertilizer_usage = request.form.get('fertilizer_usage')
         pesticide_usage = request.form.get('pesticide_usage')
         technology_level = request.form.get('technology_level')
-        
-        # Map form inputs to ML model inputs
-        ml_inputs = map_yield_form_to_ml_inputs(
-            crop_type, area, soil_type, state, seed_quality,
+
+        # Use the new yield prediction model
+        prediction_data = get_yield_prediction(
+            crop_type, area, state, seed_quality,
             fertilizer_usage, pesticide_usage, technology_level, irrigation
         )
-        
-        # Use ML model for prediction if available, otherwise use enhanced prediction
-        if ML_MODEL_AVAILABLE:
-            try:
-                prediction_data = get_ml_prediction(
-                    ml_inputs['crop_type'], ml_inputs['season'], ml_inputs['area'],
-                    ml_inputs['soil_type'], ml_inputs['nitrogen'], ml_inputs['phosphorus'],
-                    ml_inputs['potassium'], ml_inputs['rainfall'], ml_inputs['temperature']
-                )
-            except Exception as e:
-                print(f"ML model error: {str(e)}. Using fallback prediction.")
-                prediction_data = enhanced_crop_prediction(
-                    ml_inputs['crop_type'], ml_inputs['season'], ml_inputs['area'],
-                    ml_inputs['soil_type'], ml_inputs['nitrogen'], ml_inputs['phosphorus'],
-                    ml_inputs['potassium'], ml_inputs['rainfall'], ml_inputs['temperature']
-                )
-        else:
-            # Enhanced prediction model with multiple factors
-            prediction_data = enhanced_crop_prediction(
-                ml_inputs['crop_type'], ml_inputs['season'], ml_inputs['area'],
-                ml_inputs['soil_type'], ml_inputs['nitrogen'], ml_inputs['phosphorus'],
-                ml_inputs['potassium'], ml_inputs['rainfall'], ml_inputs['temperature']
-            )
-        
+
+        # Create yield_result object compatible with the template
+        yield_result = {
+            'yield_per_hectare': prediction_data['yield_per_hectare'],
+            'total_yield': prediction_data['total_yield'],
+            'confidence': prediction_data.get('confidence', 85),
+            'market_price': 1500,  # Placeholder value
+            'estimated_value': round(prediction_data['total_yield'] * 1500),  # Placeholder calculation
+            'suggestions': prediction_data.get('suggestions', []),
+            'chart_data': None  # Placeholder for chart data
+        }
+
         # Save prediction to database
         prediction = CropPrediction(
             user_id=current_user.id,
             crop_type=crop_type,
-            season=ml_inputs['season'],
+            season='Kharif', # Default season
             area=area,
-            prediction_result=prediction_data['result'],
-            yield_estimation=prediction_data['yield_estimation']
+            prediction_result=f"Yield prediction for {crop_type}",
+            yield_estimation=f"Estimated yield: {yield_result['total_yield']:.2f} tons (Average: {yield_result['yield_per_hectare']:.2f} tons/hectare)",
+            soil_type=soil_type,
+            yield_per_hectare=yield_result['yield_per_hectare'],
+            total_yield=yield_result['total_yield'],
+            confidence=yield_result['confidence']
         )
         
         db.session.add(prediction)
         db.session.commit()
         
         flash('Yield estimation generated successfully!', 'success')
-        
-        # For compatibility with the existing template, we need to extract some values
-        # Parse the yield estimation string to get numerical values
-        yield_estimation_text = prediction_data['yield_estimation']
-        try:
-            # Extract total yield and yield per hectare from the text
-            # Format is "Estimated yield: X.XX tons (Average: Y.YY tons/hectare)"
-            parts = yield_estimation_text.split()
-            total_yield = float(parts[2])
-            yield_per_hectare = float(parts[7])
-        except:
-            # Fallback values if parsing fails
-            total_yield = 0
-            yield_per_hectare = 0
-        
-        # Create yield_result object compatible with the template
-        yield_result = {
-            'yield_per_hectare': round(yield_per_hectare, 2),
-            'total_yield': round(total_yield, 2),
-            'confidence': prediction_data.get('suitability_score', 75),
-            'market_price': 1500,  # Placeholder value
-            'estimated_value': round(total_yield * 1500),  # Placeholder calculation
-            'suggestions': prediction_data.get('recommendations', []),
-            'chart_data': None  # Placeholder for chart data
-        }
         
         return render_template('yield_estimation.html',
                               crop_type=crop_type,
